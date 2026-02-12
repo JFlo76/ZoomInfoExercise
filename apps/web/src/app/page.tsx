@@ -1,6 +1,6 @@
 "use client";
 
-import { useCoAgent, useCopilotAction } from "@copilotkit/react-core";
+import { useCoAgent, useCopilotAction, useRenderToolCall } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
 import { useState } from "react";
 
@@ -28,8 +28,8 @@ export default function CopilotKitPage() {
         clickOutsideToClose={false}
         defaultOpen={true}
         labels={{
-          title: "Popup Assistant",
-          initial: "👋 Hi, there! You're chatting with an agent. This agent comes with a few tools to get you started.\n\nFor example you can try:\n- **Frontend Tools**: \"Set the theme to orange\"\n- **Shared State**: \"Write a proverb about AI\"\n- **Generative UI**: \"Get the weather in SF\"\n\nAs you interact with the agent, you'll see the UI update in real-time to reflect the agent's **state**, **tool calls**, and **progress**."
+          title: "Open-JSON-UI Assistant",
+          initial: "👋 Hi! I'm your Open-JSON-UI assistant. I can create beautiful, interactive UI components inspired by OpenAI's declarative UI standard.\n\nTry these commands:\n- **Weather Card**: \"What's the weather in San Francisco?\"\n- **Data Visualization**: \"Show me sales data visualization\"\n- **Interactive Form**: \"Create a contact form\"\n- **Shared State**: \"Write a proverb about AI\"\n- **Theme**: \"Set the theme to green\"\n\nWatch as I generate beautiful UI components in real-time! ✨"
         }}
       />
     </main>
@@ -43,7 +43,7 @@ type AgentState = {
 
 function YourMainContent({ themeColor }: { themeColor: string }) {
   // 🪁 Shared State: https://docs.copilotkit.ai/coagents/shared-state
-  const {state, setState} = useCoAgent<AgentState>({
+  const { state, setState } = useCoAgent<AgentState>({
     name: "starterAgent",
     initialState: {
       proverbs: [
@@ -69,16 +69,34 @@ function YourMainContent({ themeColor }: { themeColor: string }) {
     },
   }, [setState]);
 
-  //🪁 Generative UI: https://docs.copilotkit.ai/coagents/generative-ui
-  useCopilotAction({
+  // 🪁 Backend Tool Rendering: Render agent tool calls with Open-JSON-UI inspired components
+  useRenderToolCall({
     name: "getWeather",
-    description: "Get the weather for a given location.",
-    available: "disabled",
-    parameters: [
-      { name: "location", type: "string", required: true },
-    ],
-    render: ({ args }) => {
-      return <WeatherCard location={args.location} themeColor={themeColor} />
+    render: ({ status, args, result }) => {
+      if (status === "inProgress") {
+        return <LoadingCard title="Getting Weather" description={`Fetching weather data for ${args.location}...`} />;
+      }
+      return <WeatherCard location={args.location} themeColor={themeColor} result={result} />;
+    },
+  });
+
+  useRenderToolCall({
+    name: "showDataVisualization",
+    render: ({ status, args, result }) => {
+      if (status === "inProgress") {
+        return <LoadingCard title="Creating Visualization" description={`Generating ${args.title}...`} />;
+      }
+      return <DataVisualizationCard title={args.title} items={args.items} themeColor={themeColor} />;
+    },
+  });
+
+  useRenderToolCall({
+    name: "createInteractiveForm",
+    render: ({ status, args, result }) => {
+      if (status === "inProgress") {
+        return <LoadingCard title="Creating Form" description={`Building ${args.title}...`} />;
+      }
+      return <InteractiveFormCard title={args.title} description={args.description} fields={args.fields} themeColor={themeColor} />;
     },
   });
 
@@ -129,45 +147,125 @@ function SunIcon() {
   );
 }
 
-// Weather card component where the location and themeColor are based on what the agent
-// sets via tool calls.
-function WeatherCard({ location, themeColor }: { location?: string, themeColor: string }) {
+// Loading card component for in-progress tool calls
+function LoadingCard({ title, description }: { title: string; description: string }) {
   return (
-    <div
-    style={{ backgroundColor: themeColor }}
-    className="rounded-xl shadow-xl mt-6 mb-4 max-w-md w-full"
-  >
-    <div className="bg-white/20 p-4 w-full">
-      <div className="flex items-center justify-between">
+    <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 my-4 max-w-md animate-pulse">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+      </div>
+      <p className="text-slate-600">{description}</p>
+    </div>
+  );
+}
+
+// Weather card component with Open-JSON-UI inspired styling
+function WeatherCard({ location, themeColor, result }: { location?: string, themeColor: string, result?: string }) {
+  return (
+    <div className="bg-gradient-to-br from-sky-50 to-blue-100 border border-sky-200 rounded-xl p-6 my-4 max-w-md shadow-lg">
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-xl font-bold text-white capitalize">{location}</h3>
-          <p className="text-white">Current Weather</p>
+          <h3 className="text-xl font-bold text-sky-900 capitalize">Weather in {location}</h3>
+          <p className="text-sky-700 text-sm">Current conditions</p>
         </div>
-        <SunIcon />
+        <div className="text-4xl">🌤️</div>
       </div>
 
-      <div className="mt-4 flex items-end justify-between">
-        <div className="text-3xl font-bold text-white">70°</div>
-        <div className="text-sm text-white">Clear skies</div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="text-3xl font-bold text-sky-900">70°F</div>
+        <div className="text-right">
+          <p className="text-sky-800 font-medium">Clear skies</p>
+          <p className="text-sky-600 text-sm">Feels like 72°</p>
+        </div>
       </div>
 
-      <div className="mt-4 pt-4 border-t border-white">
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
-            <p className="text-white text-xs">Humidity</p>
-            <p className="text-white font-medium">45%</p>
-          </div>
-          <div>
-            <p className="text-white text-xs">Wind</p>
-            <p className="text-white font-medium">5 mph</p>
-          </div>
-          <div>
-            <p className="text-white text-xs">Feels Like</p>
-            <p className="text-white font-medium">72°</p>
-          </div>
+      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-sky-200">
+        <div className="bg-white/50 rounded-lg p-3">
+          <p className="text-sky-600 text-xs font-medium uppercase tracking-wide">Humidity</p>
+          <p className="text-sky-900 font-bold text-lg">45%</p>
+        </div>
+        <div className="bg-white/50 rounded-lg p-3">
+          <p className="text-sky-600 text-xs font-medium uppercase tracking-wide">Wind</p>
+          <p className="text-sky-900 font-bold text-lg">5 mph</p>
         </div>
       </div>
     </div>
-  </div>
   );
 }
+
+// Data visualization card component
+function DataVisualizationCard({ title, items, themeColor }: {
+  title: string;
+  items?: Array<{ label: string; value: string }>;
+  themeColor: string;
+}) {
+  const sampleData = items || [
+    { label: "Revenue", value: "$124K" },
+    { label: "Users", value: "2.3K" },
+    { label: "Growth", value: "+12%" },
+    { label: "Conversion", value: "3.4%" },
+  ];
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 my-4 max-w-md shadow-sm">
+      <div className="flex items-center gap-2 mb-4">
+        <div className="text-2xl">📊</div>
+        <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+      </div>
+
+      <div className="space-y-3">
+        {sampleData.map((item, index) => (
+          <div
+            key={index}
+            className={`flex justify-between items-center p-3 rounded-lg ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
+              }`}
+          >
+            <span className="text-gray-700 font-medium">{item.label}</span>
+            <span className="text-emerald-600 font-bold text-lg">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Interactive form card component  
+function InteractiveFormCard({ title, description, fields, themeColor }: {
+  title: string;
+  description?: string;
+  fields?: Array<{ name: string; type: string; placeholder?: string }>;
+  themeColor: string;
+}) {
+  return (
+    <div className="bg-white border border-gray-300 rounded-xl p-6 my-4 max-w-md shadow-sm">
+      <h3 className="text-lg font-bold text-gray-800 mb-2">{title}</h3>
+      {description && (
+        <p className="text-gray-600 text-sm mb-4">{description}</p>
+      )}
+
+      <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+        <div>
+          <input
+            type="text"
+            placeholder="Enter your name"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+        <div>
+          <input
+            type="email"
+            placeholder="Enter your email"
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+        <button
+          type="submit"
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+        >
+          Submit
+        </button>
+      </form>
+    </div>
+  )
+};

@@ -40,8 +40,46 @@ const getWeather = tool(
   },
 );
 
+// 3.2 Define a tool for data visualization
+const showDataVisualization = tool(
+  (args) => {
+    return `Generated data visualization: ${args.title} with ${args.items?.length || 0} data points.`;
+  },
+  {
+    name: "showDataVisualization",
+    description: "Display data in a visual format like charts or tables.",
+    schema: z.object({
+      title: z.string().describe("Title for the data visualization"),
+      items: z.array(z.object({
+        label: z.string(),
+        value: z.string(),
+      })).optional().describe("Array of data items to visualize"),
+    }),
+  },
+);
+
+// 3.3 Define a tool for interactive forms
+const createInteractiveForm = tool(
+  (args) => {
+    return `Created interactive form: ${args.title}`;
+  },
+  {
+    name: "createInteractiveForm",
+    description: "Create an interactive form with inputs and buttons.",
+    schema: z.object({
+      title: z.string().describe("Title for the form"),
+      description: z.string().optional().describe("Description text for the form"),
+      fields: z.array(z.object({
+        name: z.string(),
+        type: z.string(),
+        placeholder: z.string().optional(),
+      })).optional().describe("Form fields configuration"),
+    }),
+  },
+);
+
 // 4. Put our tools into an array
-const tools = [getWeather];
+const tools = [getWeather, showDataVisualization, createInteractiveForm];
 
 // 5. Define the chat node, which will handle the chat logic
 async function chat_node(state: AgentState, config: RunnableConfig) {
@@ -58,7 +96,21 @@ async function chat_node(state: AgentState, config: RunnableConfig) {
   // 5.3 Define the system message, which will be used to guide the model, in this case
   //     we also add in the language to use from the state.
   const systemMessage = new SystemMessage({
-    content: `You are a helpful assistant. The current proverbs are ${JSON.stringify(state.proverbs)}.`,
+    content: `You are a helpful assistant that can generate interactive UI components. 
+
+Current proverbs: ${JSON.stringify(state.proverbs)}
+
+Available tools for creating visual experiences:
+- getWeather: Get weather information and display it in a beautiful weather card
+- showDataVisualization: Create charts and tables for data presentation
+- createInteractiveForm: Build forms for user input
+
+When users ask for weather, data, or forms, use the appropriate tools. The UI components will be automatically rendered with beautiful styling inspired by Open-JSON-UI design principles.
+
+Example usage:
+- "What's the weather in SF?" -> Use getWeather
+- "Show me sales data" -> Use showDataVisualization with sample data
+- "Create a contact form" -> Use createInteractiveForm`,
   });
 
   // 5.4 Invoke the model with the system message and the messages in the state
