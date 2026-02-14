@@ -2,7 +2,9 @@
 
 import { useCoAgent, useCopilotAction, useRenderToolCall } from "@copilotkit/react-core";
 import { CopilotKitCSSProperties, CopilotSidebar } from "@copilotkit/react-ui";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { JSONRenderer } from "../components/JSONRenderer";
+import { UIComponent, parseUIComponent } from "../schemas/ui-schemas";
 
 export default function CopilotKitPage() {
   const [themeColor, setThemeColor] = useState("#6366f1");
@@ -55,106 +57,490 @@ export default function CopilotKitPage() {
   );
 }
 
-// Simplified state for canvas components only
+// Enhanced state for canvas components and UI state management
 type AgentState = {
-  // Removed proverbs - now we only track canvas components
+  // Canvas components
+  canvasComponents?: Array<{
+    id: string;
+    componentId: string;
+    json: UIComponent;
+    timestamp: number;
+  }>;
+  // UI State Management
+  uiState?: {
+    components: Record<string, any>; // Component-specific state  
+    formData: Record<string, any>;   // Form field values
+    appData: Record<string, any>;    // General application data
+    lastUpdate: number;              // Timestamp of last state change
+  };
 }
 
-function YourMainContent({ themeColor }: { themeColor: string }) {
+function YourMainContent({ themeColor }: { themeColor: string }): React.JSX.Element {
   // 🪁 Shared State: https://docs.copilotkit.ai/coagents/shared-state
   const { state, setState } = useCoAgent<AgentState>({
     name: "starterAgent",
-    initialState: {},
-  })
+    initialState: {
+      uiState: {
+        components: {},
+        formData: {},
+        appData: {},
+        lastUpdate: Date.now(),
+      }
+    },
+  });
+
+  // Create a ref to store the most current state for immediate agent access
+  const currentStateRef = useRef(state.uiState || {
+    components: {},
+    formData: {},
+    appData: {},
+    lastUpdate: Date.now()
+  });
+
+  // Update ref whenever state changes
+  useEffect(() => {
+    if (state.uiState) {
+      currentStateRef.current = state.uiState;
+      console.log('🔄 State ref updated:', currentStateRef.current);
+    }
+  }, [state.uiState]);
 
   // State to track generated UI components in main canvas
   const [canvasComponents, setCanvasComponents] = useState<Array<{
-    id: string;
-    type: string;
-    props: any;
+    id: string; // Unique canvas component ID
+    componentId: string; // Original component ID for state management
+    json: UIComponent;
     timestamp: number;
   }>>([]);
 
-  // Helper function to add component to canvas
-  const addToCanvas = (type: string, props: any) => {
-    const newComponent = {
-      id: `canvas-${Date.now()}-${Math.random()}`,
-      type,
-      props,
-      timestamp: Date.now(),
-    };
-    setCanvasComponents(prev => [...prev, newComponent]);
-  };
+  // Use ref to track processed tool results to prevent duplicates
+  const processedResults = useRef<Set<string>>(new Set());
 
-  // 🪁 Action to clear the canvas
+  // Add React import for useEffect
+  const React = require('react');
+
+  // 🪁 State Management Actions
+  useCopilotAction({
+    name: "updateUIState",
+    description: "Update UI state (form data, app data, component states) that persists across interactions.",
+    parameters: [{
+      name: "stateKey",
+      description: "State section to update: formData, appData, or components",
+      required: true,
+    }, {
+      name: "data",
+      description: "Data to store in the specified state section",
+      required: true,
+    }],
+    handler({ stateKey, data }) {
+      console.log(`Updating UI state: ${stateKey}`, data);
+      setState(prev => {
+        const currentState = prev || {};
+        const currentUIState = currentState.uiState || {
+          components: {},
+          formData: {},
+          appData: {},
+          lastUpdate: Date.now()
+        };
+
+        return {
+          ...currentState,
+          uiState: {
+            ...currentUIState,
+            [stateKey]: {
+              ...(currentUIState[stateKey as keyof typeof currentUIState] as Record<string, any> || {}),
+              ...(typeof data === 'object' && data !== null ? data : {})
+            },
+            lastUpdate: Date.now(),
+          }
+        };
+      });
+    },
+  });
+
+  useCopilotAction({
+    name: "getUIState",
+    description: "Get current UI state to access form data, app data, or component states. This provides real-time access to all form values and component states without requiring form submission.",
+    parameters: [{
+      name: "stateKey",
+      description: "Specific state section to get: formData, appData, components, or leave empty for all",
+      required: false,
+    }],
+    handler({ stateKey }) {
+      console.log('🔍 getUIState called by agent with stateKey:', stateKey);
+      const currentState = state.uiState || { components: {}, formData: {}, appData: {}, lastUpdate: 0 };
+
+      console.log('🔍 Agent querying UI state:', stateKey || 'ALL');
+      console.log('📊 Current state available:', currentState);
+      console.log('📝 Current form data specifically:', currentState.formData);
+
+      if (stateKey) {
+        const sectionData = currentState[stateKey as keyof typeof currentState];
+        console.log(`📊 Returning ${stateKey} data:`, sectionData);
+
+        // Create a descriptive response for the agent
+        if (stateKey === 'formData') {
+          const formEntries = Object.entries(sectionData as Record<string, any> || {});
+          console.log('📝 Form entries for agent:', formEntries);
+
+          if (formEntries.length === 0) {
+            return "No form data has been entered yet. Debug: FormData section is empty in state.";
+          }
+
+          let response = "Current form data:\n";
+          formEntries.forEach(([formId, formData]) => {
+            response += `\n📝 Form ID: ${formId}\n`;
+            if (typeof formData === 'object' && formData !== null) {
+              Object.entries(formData).forEach(([field, value]) => {
+                response += `  • ${field}: ${value}\n`;
+              });
+            }
+          });
+          return response;
+        }
+
+        return sectionData;
+      }
+
+      console.log('📊 Returning full UI state:', currentState);
+
+      // Create a comprehensive response for the agent
+      let response = "Complete UI State Summary:\n\n";
+
+      // Form data summary
+      const formEntries = Object.entries(currentState.formData || {});
+      if (formEntries.length > 0) {
+        response += "📝 FORM DATA:\n";
+        formEntries.forEach(([formId, formData]) => {
+          response += `  Form ID: ${formId}\n`;
+          if (typeof formData === 'object' && formData !== null) {
+            Object.entries(formData).forEach(([field, value]) => {
+              response += `    • ${field}: ${value}\n`;
+            });
+          }
+        });
+      } else {
+        response += "📝 FORM DATA: No forms filled yet\n";
+      }
+
+      // App data summary
+      const appEntries = Object.entries(currentState.appData || {});
+      if (appEntries.length > 0) {
+        response += "\n⚙️ APP DATA:\n" + JSON.stringify(currentState.appData, null, 2);
+      } else {
+        response += "\n⚙️ APP DATA: No app data stored yet";
+      }
+
+      // Component states summary
+      const componentEntries = Object.entries(currentState.components || {});
+      if (componentEntries.length > 0) {
+        response += "\n🎛️ COMPONENT STATES:\n" + JSON.stringify(currentState.components, null, 2);
+      } else {
+        response += "\n🎛️ COMPONENT STATES: No component states stored yet";
+      }
+
+      response += `\n\n⏱️ Last Updated: ${new Date(currentState.lastUpdate).toLocaleString()}`;
+
+      return response;
+    },
+  });
+
   useCopilotAction({
     name: "clearCanvas",
     description: "Clear all components from the main canvas.",
     parameters: [],
     handler: () => {
       setCanvasComponents([]);
+      processedResults.current.clear();
     },
   });
 
-  // 🪁 Backend Tool Rendering: Auto-display components in main canvas
+  // Debug action to show current UI state
+  useCopilotAction({
+    name: "debugUIState",
+    description: "Show the current UI state for debugging purposes.",
+    parameters: [],
+    handler: () => {
+      const currentState = state.uiState || { components: {}, formData: {}, appData: {}, lastUpdate: 0 };
+      console.log('🔍 DEBUG: Current UI State:', currentState);
+
+      const debugInfo = {
+        message: "UI State Debug Information",
+        formDataCount: Object.keys(currentState.formData || {}).length,
+        appDataCount: Object.keys(currentState.appData || {}).length,
+        componentStateCount: Object.keys(currentState.components || {}).length,
+        lastUpdate: new Date(currentState.lastUpdate).toISOString(),
+        fullState: currentState
+      };
+
+      console.log('🔍 DEBUG INFO:', debugInfo);
+      return JSON.stringify(debugInfo, null, 2);
+    },
+  });
+
+  // Direct action for agent to get live state data without JSON parsing issues
+  useCopilotAction({
+    name: "getCurrentFormData",
+    description: "Get current form data directly for agent access. Returns formatted string with all form values entered by the user.",
+    parameters: [],
+    handler: () => {
+      console.log('🎯 getCurrentFormData called by agent');
+
+      // Use the most current state from ref AND the hook state
+      const hookState = state.uiState || { components: {}, formData: {}, appData: {}, lastUpdate: 0 };
+      const refState = currentStateRef.current;
+
+      console.log('🎯 Hook state when agent queries:', hookState);
+      console.log('🎯 Ref state when agent queries:', refState);
+
+      // Use the state with the most recent timestamp or fall back to hook state
+      const currentState = (refState.lastUpdate > hookState.lastUpdate) ? refState : hookState;
+
+      console.log('🎯 Selected state for agent:', currentState);
+      console.log('🎯 Form data specifically:', currentState.formData);
+
+      const formEntries = Object.entries(currentState.formData || {});
+      console.log('🎯 Form entries found:', formEntries.length);
+      console.log('🎯 Form entries details:', formEntries);
+
+      if (formEntries.length === 0) {
+        console.log('😨 No form data found in state');
+        console.log('🔍 Debug - Hook state form data:', hookState.formData);
+        console.log('🔍 Debug - Ref state form data:', refState.formData);
+        return "No form data has been entered yet. Make sure users have filled out forms and interacted with form fields. Debug: Check console for state updates.";
+      }
+
+      let response = "📝 CURRENT FORM DATA:\n\n";
+      formEntries.forEach(([formId, formData]) => {
+        console.log(`📝 Processing form ${formId}:`, formData);
+        response += `Form ID: ${formId}\n`;
+        if (typeof formData === 'object' && formData !== null) {
+          Object.entries(formData).forEach(([field, value]) => {
+            response += `  • ${field}: "${value}"\n`;
+          });
+        }
+        response += "\n";
+      });
+
+      response += `Last updated: ${new Date(currentState.lastUpdate).toLocaleString()}`;
+      console.log('🎯 Returning to agent:', response);
+      return response;
+    },
+  });
+
+  // Helper function to update UI state from components
+  const updateStateFromComponent = (stateKey: string, data: any) => {
+    console.log(`📝 updateStateFromComponent called:`, { stateKey, data });
+    console.log('📊 Current state before local update:', state.uiState);
+
+    setState(prev => {
+      const currentState = prev || {};
+      const currentUIState = currentState.uiState || {
+        components: {},
+        formData: {},
+        appData: {},
+        lastUpdate: Date.now()
+      };
+
+      const updatedUIState = {
+        ...currentUIState,
+        [stateKey]: {
+          ...(currentUIState[stateKey as keyof typeof currentUIState] as Record<string, any> || {}),
+          ...(typeof data === 'object' && data !== null ? data : {})
+        },
+        lastUpdate: Date.now(),
+      };
+
+      console.log('📊 Updated UI state:', updatedUIState);
+      console.log('📝 Form data in updated state:', updatedUIState.formData);
+
+      return {
+        ...currentState,
+        uiState: updatedUIState
+      };
+    });
+  };
+
+  // Helper function to create a simple hash from result data
+  const createResultHash = (result: any, toolName: string) => {
+    const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+    return `${toolName}-${btoa(resultStr).substring(0, 20)}`; // Simple hash using base64
+  };
+
+  // Helper function to add component to canvas from JSON (deferred to avoid setState during render)
+  const addToCanvas = (jsonData: string | object, resultHash: string = '') => {
+    console.log('addToCanvas called with:', jsonData);
+
+    // If we have a result hash, check if we've already processed this exact result
+    if (resultHash && processedResults.current.has(resultHash)) {
+      console.log('Result already processed, skipping:', resultHash);
+      return;
+    }
+
+    // Defer the state update to avoid setState during render
+    setTimeout(() => {
+      try {
+        // Handle both string and object inputs
+        const component = typeof jsonData === 'string'
+          ? parseUIComponent(JSON.parse(jsonData))
+          : parseUIComponent(jsonData);
+
+        console.log('Parsed component:', component);
+
+        // Create unique canvas component with both component ID and timestamp
+        const canvasId = `${component.id}-canvas-${Date.now()}`;
+        const newComponent = {
+          id: canvasId, // Unique canvas ID
+          componentId: component.id, // Original component ID for state management
+          json: component,
+          timestamp: Date.now(),
+        };
+
+        // Check if component with same componentId already exists to prevent duplicates
+        setCanvasComponents(prev => {
+          const existingIndex = prev.findIndex(c => c.componentId === component.id);
+          if (existingIndex !== -1) {
+            console.log('Component with same ID already exists, replacing:', component.id);
+            // Replace existing component instead of duplicating
+            const updated = [...prev];
+            updated[existingIndex] = newComponent;
+            return updated;
+          } else {
+            console.log('Adding new component to canvas:', newComponent);
+            return [...prev, newComponent];
+          }
+        });
+
+        // Mark this result as processed if we have a hash
+        if (resultHash) {
+          processedResults.current.add(resultHash);
+        }
+      } catch (error) {
+        console.error('Failed to parse component JSON:', error);
+      }
+    }, 0);
+  };
+
+  // 🪁 Backend Tool Rendering: Auto-display components in main canvas using JSON
   useRenderToolCall({
     name: "getWeather",
-    render: ({ status, args, result }) => {
-      if (status === "complete") {
-        addToCanvas("weather", { location: args.location, result });
+    render: ({ status, result }) => {
+      console.log('getWeather render called:', status, result);
+      if (status === "complete" && result) {
+        const resultHash = createResultHash(result, "getWeather");
+        addToCanvas(result, resultHash);
       }
-      return null; // Don't render in chat - show in canvas instead
+      return <></>; // Don't render in chat - show in canvas instead
     },
   });
 
   useRenderToolCall({
     name: "showDataVisualization",
-    render: ({ status, args, result }) => {
-      if (status === "complete") {
-        addToCanvas("dataVisualization", { title: args.title, items: args.items });
+    render: ({ status, result }) => {
+      console.log('showDataVisualization render called:', status, result);
+      if (status === "complete" && result) {
+        const resultHash = createResultHash(result, "showDataVisualization");
+        addToCanvas(result, resultHash);
       }
-      return null; // Don't render in chat - show in canvas instead
+      return <></>; // Don't render in chat - show in canvas instead
     },
   });
 
   useRenderToolCall({
     name: "createInteractiveForm",
-    render: ({ status, args, result }) => {
-      if (status === "complete") {
-        addToCanvas("form", { title: args.title, description: args.description, fields: args.fields });
+    render: ({ status, result }) => {
+      console.log('createInteractiveForm render called:', status, result);
+      if (status === "complete" && result) {
+        const resultHash = createResultHash(result, "createInteractiveForm");
+        addToCanvas(result, resultHash);
       }
-      return null; // Don't render in chat - show in canvas instead
+      return <></>; // Don't render in chat - show in canvas instead
     },
   });
 
-  // 🪁 New Interactive & Layout Tools - Auto-display in canvas
   useRenderToolCall({
     name: "createDashboard",
-    render: ({ status, args, result }) => {
-      if (status === "complete") {
-        addToCanvas("dashboard", { title: args.title, layout: args.layout, sections: args.sections });
+    render: ({ status, result }) => {
+      console.log('createDashboard render called:', status, result);
+      if (status === "complete" && result) {
+        const resultHash = createResultHash(result, "createDashboard");
+        addToCanvas(result, resultHash);
       }
-      return null; // Don't render in chat - show in canvas instead
+      return <></>; // Don't render in chat - show in canvas instead
     },
   });
 
   useRenderToolCall({
     name: "createActionCard",
-    render: ({ status, args, result }) => {
-      if (status === "complete") {
-        addToCanvas("actionCard", { title: args.title, description: args.description, actions: args.actions });
+    render: ({ status, result }) => {
+      console.log('createActionCard render called:', status, result);
+      if (status === "complete" && result) {
+        const resultHash = createResultHash(result, "createActionCard");
+        addToCanvas(result, resultHash);
       }
-      return null; // Don't render in chat - show in canvas instead
+      return <></>; // Don't render in chat - show in canvas instead
     },
   });
 
   useRenderToolCall({
     name: "createWorkflow",
-    render: ({ status, args, result }) => {
-      if (status === "complete") {
-        addToCanvas("workflow", { title: args.title, currentStep: args.currentStep, steps: args.steps });
+    render: ({ status, result }) => {
+      console.log('createWorkflow render called:', status, result);
+      if (status === "complete" && result) {
+        const resultHash = createResultHash(result, "createWorkflow");
+        addToCanvas(result, resultHash);
       }
-      return null; // Don't render in chat - show in canvas instead
+      return <></>; // Don't render in chat - show in canvas instead
+    },
+  });
+
+  // Special handler for getUIState tool calls to provide real-time state access
+  useRenderToolCall({
+    name: "getUIState",
+    render: ({ status, result }) => {
+      if (status === "complete" && result) {
+        console.log('🔍 getUIState tool called from agent:', result);
+
+        // The getUIState tool returns a JSON object, but we need to provide actual state data
+        // Instead of parsing the tool result, directly provide current UI state
+        const currentState = state.uiState || { components: {}, formData: {}, appData: {}, lastUpdate: 0 };
+
+        console.log('📊 Current UI state when agent requests it:', currentState);
+
+        // Create a user-friendly display of the current state
+        let stateDisplay = "Current UI State:\n\n";
+
+        // Show form data
+        const formEntries = Object.entries(currentState.formData || {});
+        if (formEntries.length > 0) {
+          stateDisplay += "📝 FORM DATA:\n";
+          formEntries.forEach(([formId, formData]) => {
+            stateDisplay += `  Form: ${formId}\n`;
+            if (typeof formData === 'object' && formData !== null) {
+              Object.entries(formData).forEach(([field, value]) => {
+                stateDisplay += `    ${field}: ${value}\n`;
+              });
+            }
+          });
+        } else {
+          stateDisplay += "📝 FORM DATA: No form data entered yet\n";
+        }
+
+        // Show app data if any
+        if (Object.keys(currentState.appData || {}).length > 0) {
+          stateDisplay += "\n⚙️ APP DATA:\n" + JSON.stringify(currentState.appData, null, 2);
+        }
+
+        return (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-blue-900 text-sm mb-4">
+            <div className="font-bold mb-2">📊 Current UI State (Agent Access):</div>
+            <pre className="whitespace-pre-wrap text-xs bg-white p-2 rounded font-mono">
+              {stateDisplay}
+            </pre>
+          </div>
+        );
+      }
+      return <></>; // Don't render anything for incomplete states
     },
   });
 
@@ -168,7 +554,7 @@ function YourMainContent({ themeColor }: { themeColor: string }) {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-4xl font-bold text-white mb-2">
-              Generated UI Canvas
+              Generated UI Canvas ({canvasComponents.length} components)
             </h1>
             <p className="text-gray-200 italic text-sm">
               Dynamic UI components created by your agent appear here automatically! 🎨
@@ -178,7 +564,10 @@ function YourMainContent({ themeColor }: { themeColor: string }) {
           {/* Clear button */}
           {canvasComponents.length > 0 && (
             <button
-              onClick={() => setCanvasComponents([])}
+              onClick={() => {
+                setCanvasComponents([]);
+                processedResults.current.clear();
+              }}
               className="bg-red-500/80 hover:bg-red-600/80 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm transition-all"
             >
               🗑️ Clear Canvas
@@ -206,504 +595,63 @@ function YourMainContent({ themeColor }: { themeColor: string }) {
               </div>
             </div>
           ) : (
-            /* Render canvas components */
+            /* Render canvas components using JSON-based system */
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              {canvasComponents.map((component) => (
-                <CanvasComponent
-                  key={component.id}
-                  type={component.type}
-                  props={component.props}
-                  themeColor={themeColor}
-                />
-              ))}
+              {canvasComponents.map((component) => {
+                console.log('Rendering component with canvas ID:', component.id, 'component ID:', component.componentId);
+                return (
+                  <JSONRenderer
+                    key={component.id} // Use unique canvas ID as React key
+                    json={component.json}
+                    themeColor={themeColor}
+                    currentState={state.uiState || { components: {}, formData: {}, appData: {}, lastUpdate: 0 }}
+                    onStateUpdate={(stateKey, data) => {
+                      console.log(`🔄 Component ${component.componentId} updating state:`, stateKey, data);
+                      console.log('📊 State before update:', state.uiState);
+
+                      // SINGLE state update to prevent conflicts
+                      setState(prev => {
+                        const currentState = prev || {};
+                        const currentUIState = currentState.uiState || {
+                          components: {},
+                          formData: {},
+                          appData: {},
+                          lastUpdate: Date.now()
+                        };
+
+                        const updatedState = {
+                          ...currentState,
+                          uiState: {
+                            ...currentUIState,
+                            [stateKey]: {
+                              ...(currentUIState[stateKey as keyof typeof currentUIState] as Record<string, any> || {}),
+                              ...(typeof data === 'object' && data !== null ? data : {})
+                            },
+                            lastUpdate: Date.now(),
+                          }
+                        };
+
+                        console.log('🔄 Updated shared agent state:', updatedState.uiState);
+                        console.log('📝 Form data after update:', updatedState.uiState.formData);
+
+                        // Also update the ref for immediate agent access
+                        currentStateRef.current = updatedState.uiState;
+                        console.log('📝 Updated state ref:', currentStateRef.current);
+
+                        return updatedState;
+                      });
+                    }}
+                    onAction={(action, params) => {
+                      console.log(`Action triggered: ${action}`, params);
+                      // Handle component actions here - could trigger agent actions
+                    }}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// Canvas component renderer for main area
-function CanvasComponent({ type, props, themeColor }: {
-  type: string;
-  props: any;
-  themeColor: string;
-}) {
-  switch (type) {
-    case "weather":
-      return <WeatherCard location={props.location} themeColor={themeColor} result={props.result} />;
-
-    case "dashboard":
-      return <DashboardCard title={props.title} layout={props.layout} sections={props.sections} themeColor={themeColor} />;
-
-    case "form":
-      return <InteractiveFormCard title={props.title} description={props.description} fields={props.fields} themeColor={themeColor} />;
-
-    case "workflow":
-      return <WorkflowCard title={props.title} currentStep={props.currentStep} steps={props.steps} themeColor={themeColor} />;
-
-    case "actionCard":
-      return <ActionCard title={props.title} description={props.description} actions={props.actions} themeColor={themeColor} />;
-
-    case "dataVisualization":
-      return <DataVisualizationCard title={props.title} items={props.items} themeColor={themeColor} />;
-
-    default:
-      return (
-        <div className="bg-white/10 border border-white/20 rounded-xl p-6 my-4">
-          <div className="text-white">
-            <h3 className="font-bold mb-2">Unknown Component: {type}</h3>
-            <pre className="text-xs bg-black/20 p-2 rounded">
-              {JSON.stringify(props, null, 2)}
-            </pre>
-          </div>
-        </div>
-      );
-  }
-}
-
-// Simple sun icon for the weather card
-function SunIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-14 h-14 text-yellow-200">
-      <circle cx="12" cy="12" r="5" />
-      <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" strokeWidth="2" stroke="currentColor" />
-    </svg>
-  );
-}
-
-// Loading card component for in-progress tool calls
-function LoadingCard({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 my-4 max-w-md animate-pulse">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-        <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
-      </div>
-      <p className="text-slate-600">{description}</p>
-    </div>
-  );
-}
-
-// Weather card component with Open-JSON-UI inspired styling
-function WeatherCard({ location, themeColor, result }: { location?: string, themeColor: string, result?: string }) {
-  return (
-    <div className="bg-gradient-to-br from-sky-50 to-blue-100 border border-sky-200 rounded-xl p-6 my-4 max-w-md shadow-lg">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-xl font-bold text-sky-900 capitalize">Weather in {location}</h3>
-          <p className="text-sky-700 text-sm">Current conditions</p>
-        </div>
-        <div className="text-4xl">🌤️</div>
-      </div>
-
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-3xl font-bold text-sky-900">70°F</div>
-        <div className="text-right">
-          <p className="text-sky-800 font-medium">Clear skies</p>
-          <p className="text-sky-600 text-sm">Feels like 72°</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-sky-200">
-        <div className="bg-white/50 rounded-lg p-3">
-          <p className="text-sky-600 text-xs font-medium uppercase tracking-wide">Humidity</p>
-          <p className="text-sky-900 font-bold text-lg">45%</p>
-        </div>
-        <div className="bg-white/50 rounded-lg p-3">
-          <p className="text-sky-600 text-xs font-medium uppercase tracking-wide">Wind</p>
-          <p className="text-sky-900 font-bold text-lg">5 mph</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Data visualization card component
-function DataVisualizationCard({ title, items, themeColor }: {
-  title: string;
-  items?: Array<{ label: string; value: string }>;
-  themeColor: string;
-}) {
-  const sampleData = items || [
-    { label: "Revenue", value: "$124K" },
-    { label: "Users", value: "2.3K" },
-    { label: "Growth", value: "+12%" },
-    { label: "Conversion", value: "3.4%" },
-  ];
-
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 my-4 max-w-md shadow-sm">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="text-2xl">📊</div>
-        <h3 className="text-xl font-bold text-gray-800">{title}</h3>
-      </div>
-
-      <div className="space-y-3">
-        {sampleData.map((item, index) => (
-          <div
-            key={index}
-            className={`flex justify-between items-center p-3 rounded-lg ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
-              }`}
-          >
-            <span className="text-gray-700 font-medium">{item.label}</span>
-            <span className="text-emerald-600 font-bold text-lg">{item.value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Interactive form card component  
-function InteractiveFormCard({ title, description, fields, themeColor }: {
-  title: string;
-  description?: string;
-  fields?: Array<{ name: string; type: string; placeholder?: string }>;
-  themeColor: string;
-}) {
-  const [formData, setFormData] = useState<Record<string, string>>({});
-  const [submitted, setSubmitted] = useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitted(true);
-    console.log('Form submitted:', formData);
-    setTimeout(() => setSubmitted(false), 3000);
-  };
-
-  return (
-    <div className="bg-white border border-gray-300 rounded-xl p-6 my-4 max-w-md shadow-sm">
-      <h3 className="text-lg font-bold text-gray-800 mb-2">{title}</h3>
-      {description && (
-        <p className="text-gray-600 text-sm mb-4">{description}</p>
-      )}
-
-      {submitted ? (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-          <div className="text-2xl mb-2">✅</div>
-          <p className="text-green-800 font-medium">Form submitted successfully!</p>
-        </div>
-      ) : (
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <input
-              type="text"
-              placeholder="Enter your name"
-              value={formData.name || ''}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <input
-              type="email"
-              placeholder="Enter your email"
-              value={formData.email || ''}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <button
-            type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            Submit
-          </button>
-        </form>
-      )}
-    </div>
-  );
-}
-
-// Dashboard card component for composing multiple sections
-function DashboardCard({ title, layout = "grid", sections, themeColor }: {
-  title: string;
-  layout?: "grid" | "columns" | "rows";
-  sections?: Array<{ type: string; title: string; data?: any }>;
-  themeColor: string;
-}) {
-  const layoutClass = {
-    grid: "grid grid-cols-2 gap-4",
-    columns: "flex flex-row gap-4",
-    rows: "flex flex-col gap-4"
-  }[layout];
-
-  const sampleSections = sections || [
-    { type: "metric", title: "Total Revenue", data: "$142,350" },
-    { type: "metric", title: "Active Users", data: "2,847" },
-    { type: "chart", title: "Sales Trend", data: "↗️ +12%" },
-    { type: "table", title: "Recent Orders", data: "24 new" },
-  ];
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-6 my-4 max-w-4xl shadow-lg">
-      <div className="flex items-center gap-2 mb-6">
-        <div className="text-2xl">📊</div>
-        <h3 className="text-xl font-bold text-gray-800">{title}</h3>
-      </div>
-
-      <div className={layoutClass}>
-        {sampleSections.map((section, index) => (
-          <DashboardSection key={index} {...section} themeColor={themeColor} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Individual dashboard section component
-function DashboardSection({ type, title, data, themeColor }: {
-  type: string;
-  title: string;
-  data?: any;
-  themeColor: string;
-}) {
-  const icons = {
-    metric: "📈",
-    chart: "📊",
-    table: "📋",
-    form: "📝"
-  };
-
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 min-h-[120px]">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">{icons[type as keyof typeof icons] || "📄"}</span>
-        <h4 className="font-semibold text-gray-700 text-sm">{title}</h4>
-      </div>
-
-      {type === "metric" && (
-        <div className="text-2xl font-bold text-blue-600">
-          {typeof data === 'object' ? JSON.stringify(data) : data}
-        </div>
-      )}
-
-      {type === "chart" && (
-        <div className="flex items-center justify-center h-16 bg-blue-50 rounded text-blue-600">
-          {/* Handle data visualization items */}
-          {data && typeof data === 'object' && data.items ? (
-            <div className="text-xs text-center">
-              <div className="font-medium">📊 Chart</div>
-              <div>{data.items.length} items</div>
-            </div>
-          ) : (
-            <span>{typeof data === 'object' ? JSON.stringify(data) : data}</span>
-          )}
-        </div>
-      )}
-
-      {type === "table" && (
-        <div className="text-sm text-gray-600">
-          <div className="bg-white rounded p-2">
-            {/* Handle table data properly */}
-            {data && typeof data === 'object' && data.items ? (
-              <div className="space-y-1">
-                {data.items.slice(0, 3).map((item: any, index: number) => (
-                  <div key={index} className="flex justify-between text-xs">
-                    <span>{item.label}</span>
-                    <span className="font-medium">{item.value}</span>
-                  </div>
-                ))}
-                {data.items.length > 3 && (
-                  <div className="text-xs text-gray-400">
-                    +{data.items.length - 3} more...
-                  </div>
-                )}
-              </div>
-            ) : (
-              <span>{typeof data === 'object' ? JSON.stringify(data) : data}</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {type === "form" && (
-        <div className="text-xs text-gray-600">
-          <div className="bg-white rounded p-2">
-            📝 Interactive Form
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Action card component with interactive buttons
-function ActionCard({ title, description, actions, themeColor }: {
-  title: string;
-  description?: string;
-  actions?: Array<{ label: string; action: string; style?: string }>;
-  themeColor: string;
-}) {
-  const [selectedAction, setSelectedAction] = useState<string | null>(null);
-
-  const handleAction = (action: string) => {
-    setSelectedAction(action);
-    console.log('Action triggered:', action);
-
-    // Show feedback and reset
-    setTimeout(() => setSelectedAction(null), 2000);
-  };
-
-  const getButtonStyle = (style?: string) => {
-    const styles = {
-      primary: "bg-blue-600 hover:bg-blue-700 text-white",
-      secondary: "bg-gray-200 hover:bg-gray-300 text-gray-800",
-      danger: "bg-red-600 hover:bg-red-700 text-white"
-    };
-    return styles[style as keyof typeof styles] || styles.primary;
-  };
-
-  return (
-    <div className="bg-gradient-to-br from-blue-50 to-indigo-100 border border-blue-200 rounded-xl p-6 my-4 max-w-md shadow-lg">
-      <h3 className="text-xl font-bold text-blue-900 mb-2">{title}</h3>
-      {description && (
-        <p className="text-blue-700 text-sm mb-4">{description}</p>
-      )}
-
-      {selectedAction ? (
-        <div className="bg-green-100 border border-green-300 rounded-lg p-4 text-center">
-          <div className="text-lg mb-1">✨</div>
-          <p className="text-green-800 text-sm">Action "{selectedAction}" triggered!</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {actions?.map((action, index) => (
-            <button
-              key={index}
-              onClick={() => handleAction(action.action)}
-              className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${getButtonStyle(action.style)}`}
-            >
-              {action.label}
-            </button>
-          )) || (
-              <>
-                <button
-                  onClick={() => handleAction("weather")}
-                  className="w-full px-4 py-2 rounded-lg font-medium transition-colors bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  🌤️ Check Weather
-                </button>
-                <button
-                  onClick={() => handleAction("data")}
-                  className="w-full px-4 py-2 rounded-lg font-medium transition-colors bg-green-600 hover:bg-green-700 text-white"
-                >
-                  📊 View Data
-                </button>
-              </>
-            )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Workflow card component for multi-step processes
-function WorkflowCard({ title, currentStep = 0, steps, themeColor }: {
-  title: string;
-  currentStep: number;
-  steps?: Array<{ title: string; description?: string; type: string; completed: boolean }>;
-  themeColor: string;
-}) {
-  const [activeStep, setActiveStep] = useState(currentStep);
-  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
-
-  const sampleSteps = steps || [
-    { title: "Setup", description: "Configure your preferences", type: "info", completed: false },
-    { title: "Profile", description: "Complete your profile", type: "form", completed: false },
-    { title: "Verification", description: "Verify your email", type: "action", completed: false },
-    { title: "Complete", description: "You're all set!", type: "review", completed: false },
-  ];
-
-  const handleStepComplete = () => {
-    setCompletedSteps([...completedSteps, activeStep]);
-    if (activeStep < sampleSteps.length - 1) {
-      setActiveStep(activeStep + 1);
-    }
-  };
-
-  const getStepIcon = (type: string, isCompleted: boolean) => {
-    if (isCompleted) return "✅";
-    const icons = {
-      info: "ℹ️",
-      form: "📝",
-      action: "⚡",
-      review: "🔍"
-    };
-    return icons[type as keyof typeof icons] || "📄";
-  };
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-6 my-4 max-w-lg shadow-lg">
-      <h3 className="text-xl font-bold text-gray-800 mb-4">{title}</h3>
-
-      {/* Progress bar */}
-      <div className="mb-6">
-        <div className="flex justify-between text-sm text-gray-500 mb-2">
-          <span>Step {activeStep + 1} of {sampleSteps.length}</span>
-          <span>{Math.round(((activeStep + 1) / sampleSteps.length) * 100)}% complete</span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2">
-          <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${((activeStep + 1) / sampleSteps.length) * 100}%` }}
-          ></div>
-        </div>
-      </div>
-
-      {/* Steps */}
-      <div className="space-y-3">
-        {sampleSteps.map((step, index) => {
-          const isActive = index === activeStep;
-          const isCompleted = completedSteps.includes(index);
-
-          return (
-            <div
-              key={index}
-              className={`p-3 rounded-lg border transition-all ${isActive
-                ? 'border-blue-300 bg-blue-50'
-                : isCompleted
-                  ? 'border-green-300 bg-green-50'
-                  : 'border-gray-200 bg-gray-50'
-                }`}
-            >
-              <div className="flex items-center gap-3">
-                <span className="text-lg">{getStepIcon(step.type, isCompleted)}</span>
-                <div className="flex-1">
-                  <h4 className={`font-medium ${isActive ? 'text-blue-800' : isCompleted ? 'text-green-800' : 'text-gray-700'}`}>
-                    {step.title}
-                  </h4>
-                  {step.description && (
-                    <p className={`text-sm ${isActive ? 'text-blue-600' : isCompleted ? 'text-green-600' : 'text-gray-500'}`}>
-                      {step.description}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {isActive && !isCompleted && (
-                <div className="mt-3">
-                  <button
-                    onClick={handleStepComplete}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-                  >
-                    Complete Step
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {completedSteps.length === sampleSteps.length && (
-        <div className="mt-4 bg-green-100 border border-green-300 rounded-lg p-4 text-center">
-          <div className="text-2xl mb-2">🎉</div>
-          <p className="text-green-800 font-medium">Workflow completed!</p>
-        </div>
-      )}
     </div>
   );
 }
